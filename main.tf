@@ -2,8 +2,6 @@ data "aws_partition" "current" {}
 data "aws_caller_identity" "current" {}
 
 locals {
-  create = var.create && var.putin_khuylo
-
   cluster_role = try(aws_iam_role.this[0].arn, var.iam_role_arn)
 }
 
@@ -12,7 +10,7 @@ locals {
 ################################################################################
 
 resource "aws_eks_cluster" "this" {
-  count = local.create ? 1 : 0
+  count = var.create ? 1 : 0
 
   name                      = var.cluster_name
   role_arn                  = local.cluster_role
@@ -66,7 +64,7 @@ resource "aws_ec2_tag" "cluster_primary_security_group" {
   # This should not affect the name of the cluster primary security group
   # Ref: https://github.com/terraform-aws-modules/terraform-aws-eks/pull/2006
   # Ref: https://github.com/terraform-aws-modules/terraform-aws-eks/pull/2008
-  for_each = { for k, v in merge(var.tags, var.cluster_tags) : k => v if local.create && k != "Name" && var.create_cluster_primary_security_group_tags }
+  for_each = { for k, v in merge(var.tags, var.cluster_tags) : k => v if var.create && k != "Name" && var.create_cluster_primary_security_group_tags }
 
   resource_id = aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id
   key         = each.key
@@ -74,7 +72,7 @@ resource "aws_ec2_tag" "cluster_primary_security_group" {
 }
 
 resource "aws_cloudwatch_log_group" "this" {
-  count = local.create && var.create_cloudwatch_log_group ? 1 : 0
+  count = var.create && var.create_cloudwatch_log_group ? 1 : 0
 
   name              = "/aws/eks/${var.cluster_name}/cluster"
   retention_in_days = var.cloudwatch_log_group_retention_in_days
@@ -91,7 +89,7 @@ module "kms" {
   source  = "terraform-aws-modules/kms/aws"
   version = "1.0.2" # Note - be mindful of Terraform/provider version compatibility between modules
 
-  create = local.create && var.create_kms_key
+  create = var.create && var.create_kms_key
 
   description             = coalesce(var.kms_key_description, "${var.cluster_name} cluster encryption key")
   key_usage               = "ENCRYPT_DECRYPT"
@@ -120,7 +118,7 @@ module "kms" {
 
 locals {
   cluster_sg_name   = coalesce(var.cluster_security_group_name, "${var.cluster_name}-cluster")
-  create_cluster_sg = local.create && var.create_cluster_security_group
+  create_cluster_sg = var.create && var.create_cluster_security_group
 
   cluster_security_group_id = local.create_cluster_sg ? aws_security_group.cluster[0].id : var.cluster_security_group_id
 
@@ -199,13 +197,13 @@ resource "aws_security_group_rule" "cluster" {
 ################################################################################
 
 data "tls_certificate" "this" {
-  count = local.create && var.enable_irsa ? 1 : 0
+  count = var.create && var.enable_irsa ? 1 : 0
 
   url = aws_eks_cluster.this[0].identity[0].oidc[0].issuer
 }
 
 resource "aws_iam_openid_connect_provider" "oidc_provider" {
-  count = local.create && var.enable_irsa ? 1 : 0
+  count = var.create && var.enable_irsa ? 1 : 0
 
   client_id_list  = distinct(compact(concat(["sts.${local.dns_suffix}"], var.openid_connect_audiences)))
   thumbprint_list = concat([data.tls_certificate.this[0].certificates[0].sha1_fingerprint], var.custom_oidc_thumbprints)
@@ -222,7 +220,7 @@ resource "aws_iam_openid_connect_provider" "oidc_provider" {
 ################################################################################
 
 locals {
-  create_iam_role   = local.create && var.create_iam_role
+  create_iam_role   = var.create && var.create_iam_role
   iam_role_name     = coalesce(var.iam_role_name, "${var.cluster_name}-cluster")
   policy_arn_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
 
@@ -234,7 +232,7 @@ locals {
 }
 
 data "aws_iam_policy_document" "assume_role_policy" {
-  count = local.create && var.create_iam_role ? 1 : 0
+  count = var.create && var.create_iam_role ? 1 : 0
 
   statement {
     sid     = "EKSClusterAssumeRole"
@@ -336,7 +334,7 @@ resource "aws_iam_policy" "cluster_encryption" {
 ################################################################################
 
 resource "aws_eks_addon" "this" {
-  for_each = { for k, v in var.cluster_addons : k => v if local.create }
+  for_each = { for k, v in var.cluster_addons : k => v if var.create }
 
   cluster_name = aws_eks_cluster.this[0].name
   addon_name   = try(each.value.name, each.key)
@@ -360,7 +358,7 @@ resource "aws_eks_addon" "this" {
 ################################################################################
 
 resource "aws_eks_identity_provider_config" "this" {
-  for_each = { for k, v in var.cluster_identity_providers : k => v if local.create }
+  for_each = { for k, v in var.cluster_identity_providers : k => v if var.create }
 
   cluster_name = aws_eks_cluster.this[0].name
 
